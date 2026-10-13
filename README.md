@@ -15,3 +15,24 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+Anna AI Concierge
+AI-powered concierge assistant for:
+
+Doctors
+Pharmacies
+Heating Services
+Plumbing Services
+Electrical Services
+Gardening Services
+Automotive Services
+Features:
+
+Flutter mobile app
+Voice input
+Camera upload
+Image upload
+Make.com integration
+AI-powered assistance
+Lead generation
+Status: In active development
