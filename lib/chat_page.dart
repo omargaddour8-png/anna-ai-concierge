@@ -8,6 +8,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/memory_service.dart';
+import 'models/user_memory.dart';
 
 // import 'package:geolocator/geolocator.dart';
 
@@ -19,6 +21,7 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  final MemoryService _memoryService = MemoryService();
   final TextEditingController controller = TextEditingController();
   final ScrollController scrollController = ScrollController();
 
@@ -59,11 +62,12 @@ class _ChatPageState extends State<ChatPage> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    conversationId = const Uuid().v4();
-  }
+void initState() {
+  super.initState();
+  conversationId = const Uuid().v4();
 
+  initializeChat();
+}
   @override
   void dispose() {
     controller.dispose();
@@ -112,7 +116,7 @@ class _ChatPageState extends State<ChatPage> {
   //     return null;
   //   }
   // }
-  void startLeadFlow(String service) {
+  Future<void> startLeadFlow(String service) async {
   leadData.clear();
 
   leadData["service"] = service;
@@ -128,54 +132,66 @@ class _ChatPageState extends State<ChatPage> {
       "time": getCurrentTime(),
     });
   });
+  await saveMessages();
 }
-Future<void> processLeadFlow(
-  String answer,
-) async {
+Future<void> processLeadFlow(String answer) async {
+  final memory = await _memoryService.loadMemory();
+
   switch (currentLeadStep) {
     case "name":
       leadData["name"] = answer;
+
+      memory.name = answer;
+      await _memoryService.saveMemory(memory);
+
       currentLeadStep = "phone";
 
-      addAnnaMessage(
+      await addAnnaMessage(
         "What phone number should we contact you on?",
       );
       break;
 
     case "phone":
       leadData["phone"] = answer;
+
+      memory.phone = answer;
+      await _memoryService.saveMemory(memory);
+
       currentLeadStep = "city";
 
-      addAnnaMessage(
+      await addAnnaMessage(
         "Which city are you located in?",
       );
       break;
 
     case "city":
       leadData["city"] = answer;
+
+      memory.city = answer;
+      await _memoryService.saveMemory(memory);
+
       currentLeadStep = "date";
 
-      addAnnaMessage(
+      await addAnnaMessage(
         "What is your preferred appointment date?",
       );
       break;
 
     case "date":
-      leadData["appointment_date"] =
-          answer;
+      leadData["appointment_date"] = answer;
 
       await submitLead();
 
       collectingLead = false;
       currentLeadStep = "";
 
-      addAnnaMessage(
+      await addAnnaMessage(
         "✅ Thank you! Your request has been submitted. We will contact you soon.",
       );
       break;
   }
 }
-void addAnnaMessage(String text) {
+Future<void> addAnnaMessage(String text) async {
   setState(() {
     messages.add({
       "text": text,
@@ -183,8 +199,7 @@ void addAnnaMessage(String text) {
       "time": getCurrentTime(),
     });
   });
-
-  saveMessages();
+  await saveMessages();
   scrollToBottom();
 }
 Future<void> submitLead() async {
@@ -385,88 +400,169 @@ Future<void> initializeChat() async {
     controller.text = text;
     await sendMessage();
   }
+bool containsAny(
+  String text,
+  List<String> keywords,
+) {
+  return keywords.any(
+    (keyword) => text.contains(keyword),
+  );
+}
+Future<bool> detectServiceLead(
+  String lower,
+) async {
+  final services = {
+    "Heating": [
+      "heating",
+      "boiler",
+      "radiator",
+      "heater",
+      "hot water",
+    ],
+    "Plumbing": [
+      "plumber",
+      "plumbing",
+      "pipe",
+      "leak",
+      "sink",
+      "toilet",
+    ],
+    "Doctor": [
+      "doctor",
+      "hospital",
+      "clinic",
+      "medical",
+      "health",
+    ],
+    "Pharmacy": [
+      "pharmacy",
+      "medicine",
+      "medication",
+      "prescription",
+    ],
+    "Electrical": [
+      "electrician",
+      "electrical",
+      "socket",
+      "power",
+      "fuse",
+    ],
+    "Gardening": [
+      "garden",
+      "gardening",
+      "lawn",
+      "tree",
+      "hedge",
+    ],
+    "Auto": [
+      "car",
+      "vehicle",
+      "mechanic",
+      "engine",
+      "battery",
+    ],
+    "Locksmith": [
+      "locksmith",
+      "locked out",
+      "key",
+      "lock",
+    ],
+  };
 
+  for (final entry in services.entries) {
+    if (containsAny(lower, entry.value)) {
+      await startLeadFlow(entry.key);
+      return true;
+    }
+  }
+
+  return false;
+}
   // =========================================================
   // SEND MESSAGE
   // =========================================================
 
   Future<void> sendMessage() async {
-    if (controller.text.trim().isEmpty || annaTyping) {
-      return;
-    }
-    
-    final userText = controller.text.trim();
-    if (collectingLead) {
-  setState(() {
-    messages.add({
-      "text": userText,
-      "isUser": true,
-      "time": getCurrentTime(),
-    });
-  });
-
-  controller.clear();
-
-  await processLeadFlow(userText);
-
-  return;
-}
-    if (!collectingLead) {
-  if (userText.toLowerCase().contains("heating")) {
-    startLeadFlow("Heating");
+  if (controller.text.trim().isEmpty || annaTyping) {
     return;
   }
 
-  if (userText.toLowerCase().contains("plumbing")) {
-    startLeadFlow("Plumbing");
-    return;
-  }
+  final userText = controller.text.trim();
 
-  if (userText.toLowerCase().contains("doctor")) {
-    startLeadFlow("Doctor");
-    return;
-  }
+  await updateMemory(userText);
 
-  if (userText.toLowerCase().contains("pharmacy")) {
-    startLeadFlow("Pharmacy");
+  final memory = await _memoryService.loadMemory();
+
+  final memoryContext = """
+User Information:
+
+Name: ${memory.name ?? "Unknown"}
+Vehicle: ${memory.vehicle ?? "Unknown"}
+City: ${memory.city ?? "Unknown"}
+
+Use this information naturally during the conversation.
+""";
+if (!collectingLead) {
+  final lower = userText.toLowerCase();
+
+  if (await detectServiceLead(lower)) {
     return;
   }
 }
-
+  if (collectingLead) {
     setState(() {
       messages.add({
         "text": userText,
         "isUser": true,
         "time": getCurrentTime(),
       });
-
-      annaTyping = true;
     });
 
+    await saveMessages();
+
     controller.clear();
-    scrollToBottom();
 
-    try {
-      // =====================================================
-      // IMAGE MESSAGE
-      // =====================================================
+    await processLeadFlow(userText);
 
-      if (selectedImage != null) {
-        final request = http.MultipartRequest(
-          'POST',
-          Uri.parse(webhookUrl),
-        );
+    return;
+  }
 
-        request.fields['message'] = userText;
-        request.fields['conversation_id'] =
-            conversationId;
+      setState(() {
+        messages.add({
+          "text": userText,
+          "isUser": true,
+          "time": getCurrentTime(),
+        });
 
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'image',
-            selectedImage!.path,
-          ),
-        );
+        annaTyping = true;
+      });
+
+      await saveMessages();
+
+      controller.clear();
+
+      scrollToBottom();
+
+      try {
+        // =====================================================
+        // IMAGE MESSAGE
+        // =====================================================
+
+        if (selectedImage != null) {
+          final request = http.MultipartRequest(
+            'POST',
+            Uri.parse(webhookUrl),
+          );
+
+          request.fields['message'] = userText;
+          request.fields['conversation_id'] = conversationId;
+
+          request.files.add(
+            await http.MultipartFile.fromPath(
+              'image',
+              selectedImage!.path,
+            ),
+          );
 
         final streamedResponse =
             await request.send();
@@ -487,18 +583,17 @@ Future<void> initializeChat() async {
               response.body;
         } catch (_) {}
 
-        setState(() {
-          annaTyping = false;
+                  setState(() {
+            annaTyping = false;
 
-          messages.add({
-            "text": reply,
-            "isUser": false,
-            "time": getCurrentTime(),
+            messages.add({
+              "text": reply,
+              "isUser": false,
+              "time": getCurrentTime(),
+            });
+            selectedImage = null;
           });
-
-          selectedImage = null;
-        });
-
+        await saveMessages();
         scrollToBottom();
         return;
       }
@@ -520,13 +615,8 @@ Future<void> initializeChat() async {
                       "application/json",
                 },
                 body: jsonEncode({
-                  "message": userText,
-                  "conversation_id":
-                      conversationId,
-
-                  // FUTURE GPS SUPPORT
-                  // "latitude": position?.latitude,
-                  // "longitude": position?.longitude,
+                  "message": "$memoryContext\n\nUser: $userText",
+                  "conversation_id": conversationId,
                 }),
               )
               .timeout(
@@ -557,6 +647,7 @@ Future<void> initializeChat() async {
                 "time": getCurrentTime(),
               });
             });
+            await saveMessages();
 
             scrollToBottom();
             return;
@@ -587,6 +678,7 @@ Future<void> initializeChat() async {
           "time": getCurrentTime(),
         });
       });
+      await saveMessages();
     } catch (_) {
       setState(() {
         annaTyping = false;
@@ -598,11 +690,42 @@ Future<void> initializeChat() async {
           "time": getCurrentTime(),
         });
       });
+      await saveMessages();
     }
 
     scrollToBottom();
   }
+Future<void> updateMemory(String message) async {
+  final memory = await _memoryService.loadMemory();
 
+  final text = message.toLowerCase();
+
+  if (text.contains("my name is")) {
+  final index =
+      text.indexOf("my name is");
+
+  memory.name =
+      message.substring(index + 10).trim();
+}
+
+  if (text.contains("i drive")) {
+  final index =
+      text.indexOf("i drive");
+
+  memory.name =
+      message.substring(index + 10).trim();
+}
+
+  if (text.contains("i live in")) {
+  final index =
+      text.indexOf("i live in");
+
+  memory.name =
+      message.substring(index + 10).trim();
+}
+
+  await _memoryService.saveMemory(memory);
+}
   Widget serviceButton(
     String title,
     String prompt,
@@ -690,13 +813,42 @@ Future<void> initializeChat() async {
     return Scaffold(
       backgroundColor:
           const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor:
-            const Color(0xFF2563EB),
-        foregroundColor: Colors.white,
-        title:
-            const Text("Anna AI Concierge"),
-      ),
+          appBar: AppBar(
+          backgroundColor: const Color(0xFF2563EB),
+          foregroundColor: Colors.white,
+          title: const Text("Anna AI Concierge"),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.psychology),
+              onPressed: () async {
+                final memory = await _memoryService.loadMemory();
+
+                if (!mounted) return;
+
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Anna Memory'),
+                    content: Text(
+                      '''
+        Name: ${memory.name ?? "Unknown"}
+        Vehicle: ${memory.vehicle ?? "Unknown"}
+        City: ${memory.city ?? "Unknown"}
+        Phone: ${memory.phone ?? "Unknown"}
+        ''',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Close'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       body: Column(
         children: [
           Container(
