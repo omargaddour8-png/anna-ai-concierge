@@ -13,6 +13,8 @@ import 'models/user_memory.dart';
 import 'widgets/message_bubble.dart';
 import 'services/storage_service.dart';
 import 'widgets/service_card.dart';
+import 'widgets/typing_indicator.dart';
+import 'services/chat_service.dart';
 
 // import 'package:geolocator/geolocator.dart';
 
@@ -26,25 +28,21 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final StorageService _storageService = StorageService();
   final MemoryService _memoryService = MemoryService();
+  late ChatService _chatService;
   final TextEditingController controller = TextEditingController();
   final ScrollController scrollController = ScrollController();
-
   final SpeechToText speech = SpeechToText();
   final ImagePicker picker = ImagePicker();
 
   bool isListening = false;
   bool annaTyping = false;
-
   File? selectedImage;
-
   final String webhookUrl =
       'https://hook.eu1.make.com/scmnfgpddnq2cud1vfligm5h0n3fpklr';
-
   late String conversationId;
   Map<String, dynamic> leadData = {};
   bool collectingLead = false;
   String currentLeadStep = "";
-
   final List<Map<String, dynamic>> messages = [
     {
       "text":
@@ -65,10 +63,15 @@ class _ChatPageState extends State<ChatPage> {
     }
   ];
 
-  @override
+@override
 void initState() {
   super.initState();
+
   conversationId = const Uuid().v4();
+
+  _chatService = ChatService(
+    webhookUrl: webhookUrl,
+  );
 
   initializeChat();
 }
@@ -164,8 +167,6 @@ await updateMemory(userText);
 final memory =
     await _memoryService.loadMemory();
 
-final lower =
-    userText.toLowerCase();
 
   switch (currentLeadStep) {
     case "name":
@@ -258,11 +259,22 @@ Future<void> clearChat() async {
       ..clear()
       ..add({
         "text":
-            "👋 Welcome back!\n\nHow can I help you today?",
+            "👋 Welcome!\n\n"
+            "I'm Anna, your AI Concierge.\n\n"
+            "How can I help you today?",
         "isUser": false,
         "time": "",
       });
+
+    annaTyping = false;
+    selectedImage = null;
   });
+
+  await _storageService.saveMessages(
+    messages,
+  );
+
+  scrollToBottom();
 }
 Future<void> initializeChat() async {
   final savedId =
@@ -781,6 +793,71 @@ if (!collectingLead) {
           title: const Text("Anna AI Concierge"),
           actions: [
             IconButton(
+                icon: const Icon(Icons.psychology),
+                onPressed: () async {
+                  final memory =
+                      await _memoryService.loadMemory();
+
+                  if (!mounted) return;
+
+                  showDialog(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: Text(
+                        'Anna Memory (${getMemoryCount(memory)} facts)',
+                      ),
+                      content: Text(
+                        '''
+              Name: ${memory.name ?? "Unknown"}
+              Vehicle: ${memory.vehicle ?? "Unknown"}
+              City: ${memory.city ?? "Unknown"}
+              Phone: ${memory.phone ?? "Unknown"}
+              ''',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () =>
+                              Navigator.pop(context),
+                          child: const Text('Close'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: () async {
+                final confirmed =
+                    await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Clear Chat?'),
+                    content: const Text(
+                      'This will remove all messages but keep Anna\'s memory.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.pop(context, true),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (confirmed == true) {
+                  await clearChat();
+                }
+              },
+            ),
+
+            IconButton(
               icon: const Icon(Icons.delete_forever),
               onPressed: () async {
                 final confirmed =
@@ -862,6 +939,33 @@ if (!collectingLead) {
                     "I have a plumbing issue.",
                   ),
                 ),
+                ServiceCard(
+                  title: "⚡ Electrical",
+                  onTap: () => sendQuickMessage(
+                    "I need an electrician.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "🌿 Gardening",
+                  onTap: () => sendQuickMessage(
+                    "I need a gardener.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "🚗 Auto",
+                  onTap: () => sendQuickMessage(
+                    "I need a mechanic.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "🔑 Locksmith",
+                  onTap: () => sendQuickMessage(
+                    "I am locked out.",
+                  ),
+                ),
               ],
             ),
           ),
@@ -926,26 +1030,9 @@ if (!collectingLead) {
               itemBuilder:
                   (context, index) {
                 if (annaTyping &&
-                    index ==
-                        messages.length) {
-                  return const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
-                        ),
-                        SizedBox(width: 12),
-                        Text("Anna is typing..."),
-                      ],
-                    ),
-                  );
-                }
+                   index == messages.length) {
+                 return const TypingIndicator();
+               }
 
                 return MessageBubble(
                 msg: messages[index],
