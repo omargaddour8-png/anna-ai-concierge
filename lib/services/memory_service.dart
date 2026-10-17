@@ -27,4 +27,10 @@ class MemoryService {
       jsonEncode(memory.toJson()),
     );
   }
+  Future<void> clearMemory() async {
+  final prefs =
+      await SharedPreferences.getInstance();
+
+  await prefs.remove('user_memory');
+}
 }

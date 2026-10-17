@@ -10,6 +10,9 @@ import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/memory_service.dart';
 import 'models/user_memory.dart';
+import 'widgets/message_bubble.dart';
+import 'services/storage_service.dart';
+import 'widgets/service_card.dart';
 
 // import 'package:geolocator/geolocator.dart';
 
@@ -21,6 +24,7 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  final StorageService _storageService = StorageService();
   final MemoryService _memoryService = MemoryService();
   final TextEditingController controller = TextEditingController();
   final ScrollController scrollController = ScrollController();
@@ -80,15 +84,30 @@ void initState() {
 
     return "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
   }
-  Future<void> saveMessages() async {
-  final prefs =
-      await SharedPreferences.getInstance();
 
-  await prefs.setString(
-    'anna_messages',
-    jsonEncode(messages),
-  );
+  int getMemoryCount(UserMemory memory) {
+  int count = 0;
+
+  if (memory.name != null && memory.name!.isNotEmpty) {
+    count++;
   }
+
+  if (memory.city != null && memory.city!.isNotEmpty) {
+    count++;
+  }
+
+  if (memory.vehicle != null &&
+      memory.vehicle!.isNotEmpty) {
+    count++;
+  }
+
+  if (memory.phone != null &&
+      memory.phone!.isNotEmpty) {
+    count++;
+  }
+
+  return count;
+}
 
   // =========================================================
   // FUTURE GPS SUPPORT (COMMENTED OUT)
@@ -132,10 +151,21 @@ void initState() {
       "time": getCurrentTime(),
     });
   });
-  await saveMessages();
+  await _storageService.saveMessages(
+  messages,);
 }
-Future<void> processLeadFlow(String answer) async {
-  final memory = await _memoryService.loadMemory();
+Future<void> processLeadFlow(
+  String answer,
+) async {
+ final userText = controller.text.trim();
+
+await updateMemory(userText);
+
+final memory =
+    await _memoryService.loadMemory();
+
+final lower =
+    userText.toLowerCase();
 
   switch (currentLeadStep) {
     case "name":
@@ -199,7 +229,7 @@ Future<void> addAnnaMessage(String text) async {
       "time": getCurrentTime(),
     });
   });
-  await saveMessages();
+  await _storageService.saveMessages(messages,);
   scrollToBottom();
 }
 Future<void> submitLead() async {
@@ -215,38 +245,6 @@ Future<void> submitLead() async {
       }),
     );
   } catch (_) {}
-}
-Future<void> loadMessages() async {
-  final prefs =
-      await SharedPreferences.getInstance();
-
-  final savedMessages =
-      prefs.getString('anna_messages');
-
-  if (savedMessages == null) return;
-
-  final decoded =
-      jsonDecode(savedMessages) as List;
-
-  setState(() {
-    messages
-      ..clear()
-      ..addAll(
-        decoded.map(
-          (e) =>
-              Map<String, dynamic>.from(e),
-        ),
-      );
-  });
-}
-Future<void> saveConversationId() async {
-  final prefs =
-      await SharedPreferences.getInstance();
-
-  await prefs.setString(
-    'anna_conversation_id',
-    conversationId,
-  );
 }
 
 Future<void> clearChat() async {
@@ -267,24 +265,28 @@ Future<void> clearChat() async {
   });
 }
 Future<void> initializeChat() async {
-  final prefs =
-      await SharedPreferences.getInstance();
-
-  final savedId = prefs.getString(
-    'anna_conversation_id',
-  );
+  final savedId =
+      await _storageService.loadConversationId();
 
   conversationId =
       savedId ?? const Uuid().v4();
 
   if (savedId == null) {
-    await prefs.setString(
-      'anna_conversation_id',
+    await _storageService.saveConversationId(
       conversationId,
     );
   }
 
-  await loadMessages();
+  final loadedMessages =
+      await _storageService.loadMessages();
+
+  if (loadedMessages.isNotEmpty) {
+    setState(() {
+      messages
+        ..clear()
+        ..addAll(loadedMessages);
+    });
+  }
 }
   // =========================================================
   // VOICE INPUT
@@ -478,6 +480,39 @@ Future<bool> detectServiceLead(
 
   return false;
 }
+Future<void> updateMemory(String message) async {
+  final memory = await _memoryService.loadMemory();
+
+  final text = message.toLowerCase();
+
+  if (text.contains("my name is")) {
+    final index = text.indexOf("my name is");
+    memory.name =
+        message.substring(index + 10).trim();
+  }
+
+  if (text.contains("i live in")) {
+    final index = text.indexOf("i live in");
+    memory.city =
+        message.substring(index + 9).trim();
+  }
+
+  if (text.contains("i drive")) {
+    final index = text.indexOf("i drive");
+    memory.vehicle =
+        message.substring(index + 7).trim();
+  }
+
+  if (text.contains("my phone number is")) {
+    final index =
+        text.indexOf("my phone number is");
+
+    memory.phone =
+        message.substring(index + 18).trim();
+  }
+
+  await _memoryService.saveMemory(memory);
+}
   // =========================================================
   // SEND MESSAGE
   // =========================================================
@@ -488,7 +523,6 @@ Future<bool> detectServiceLead(
   }
 
   final userText = controller.text.trim();
-
   await updateMemory(userText);
 
   final memory = await _memoryService.loadMemory();
@@ -499,12 +533,52 @@ User Information:
 Name: ${memory.name ?? "Unknown"}
 Vehicle: ${memory.vehicle ?? "Unknown"}
 City: ${memory.city ?? "Unknown"}
+Phone: ${memory.phone ?? "Unknown"}
 
 Use this information naturally during the conversation.
 """;
-if (!collectingLead) {
-  final lower = userText.toLowerCase();
+final lower = userText.toLowerCase();
 
+if (!collectingLead) {
+
+  // Memory Questions
+  if (lower == "who am i" ||
+      lower.contains("what do you know about me") ||
+      lower.contains("what do you remember about me")) {
+
+    String reply = "";
+
+    if (memory.name != null &&
+        memory.name!.isNotEmpty) {
+      reply += "👤 Name: ${memory.name}\n";
+    }
+
+    if (memory.city != null &&
+        memory.city!.isNotEmpty) {
+      reply += "📍 City: ${memory.city}\n";
+    }
+
+    if (memory.vehicle != null &&
+        memory.vehicle!.isNotEmpty) {
+      reply += "🚗 Vehicle: ${memory.vehicle}\n";
+    }
+
+    if (memory.phone != null &&
+        memory.phone!.isNotEmpty) {
+      reply += "📞 Phone: ${memory.phone}\n";
+    }
+
+    if (reply.isEmpty) {
+      reply =
+          "I don't know much about you yet.";
+    }
+
+    await addAnnaMessage(reply);
+
+    return;
+  }
+
+  // Service detection
   if (await detectServiceLead(lower)) {
     return;
   }
@@ -518,7 +592,7 @@ if (!collectingLead) {
       });
     });
 
-    await saveMessages();
+    await _storageService.saveMessages(messages,);
 
     controller.clear();
 
@@ -537,7 +611,7 @@ if (!collectingLead) {
         annaTyping = true;
       });
 
-      await saveMessages();
+      await _storageService.saveMessages(messages,);
 
       controller.clear();
 
@@ -593,7 +667,7 @@ if (!collectingLead) {
             });
             selectedImage = null;
           });
-        await saveMessages();
+        await _storageService.saveMessages(messages,);
         scrollToBottom();
         return;
       }
@@ -647,7 +721,7 @@ if (!collectingLead) {
                 "time": getCurrentTime(),
               });
             });
-            await saveMessages();
+            await _storageService.saveMessages(messages,);
 
             scrollToBottom();
             return;
@@ -678,7 +752,7 @@ if (!collectingLead) {
           "time": getCurrentTime(),
         });
       });
-      await saveMessages();
+      await _storageService.saveMessages(messages,);
     } catch (_) {
       setState(() {
         annaTyping = false;
@@ -690,122 +764,10 @@ if (!collectingLead) {
           "time": getCurrentTime(),
         });
       });
-      await saveMessages();
+      await _storageService.saveMessages(messages,);
     }
 
     scrollToBottom();
-  }
-Future<void> updateMemory(String message) async {
-  final memory = await _memoryService.loadMemory();
-
-  final text = message.toLowerCase();
-
-  if (text.contains("my name is")) {
-  final index =
-      text.indexOf("my name is");
-
-  memory.name =
-      message.substring(index + 10).trim();
-}
-
-  if (text.contains("i drive")) {
-  final index =
-      text.indexOf("i drive");
-
-  memory.name =
-      message.substring(index + 10).trim();
-}
-
-  if (text.contains("i live in")) {
-  final index =
-      text.indexOf("i live in");
-
-  memory.name =
-      message.substring(index + 10).trim();
-}
-
-  await _memoryService.saveMemory(memory);
-}
-  Widget serviceButton(
-    String title,
-    String prompt,
-  ) {
-    return ElevatedButton(
-      onPressed: () =>
-          sendQuickMessage(prompt),
-      child: Text(title),
-    );
-  }
-
-  Widget buildMessage(
-    Map<String, dynamic> msg,
-  ) {
-    final bool isUser =
-        msg["isUser"] ?? false;
-
-    return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        vertical: 6,
-      ),
-      child: Row(
-        mainAxisAlignment: isUser
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
-          if (!isUser)
-            const CircleAvatar(
-              radius: 20,
-              backgroundImage: AssetImage(
-                "assets/images/anna_avatar.jpg",
-              ),
-            ),
-
-          if (!isUser)
-            const SizedBox(width: 8),
-
-          Flexible(
-            child: Container(
-              padding:
-                  const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: isUser
-                    ? const Color(
-                        0xFF2563EB)
-                    : Colors.white,
-                borderRadius:
-                    BorderRadius.circular(
-                        18),
-              ),
-              child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    msg["text"] ?? "",
-                    style: TextStyle(
-                      color: isUser
-                          ? Colors.white
-                          : Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    msg["time"] ?? "",
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: isUser
-                          ? Colors.white70
-                          : Colors.black54,
-                    ),
-                  )
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -819,30 +781,45 @@ Future<void> updateMemory(String message) async {
           title: const Text("Anna AI Concierge"),
           actions: [
             IconButton(
-              icon: const Icon(Icons.psychology),
+              icon: const Icon(Icons.delete_forever),
               onPressed: () async {
-                final memory = await _memoryService.loadMemory();
-
-                if (!mounted) return;
-
-                showDialog(
+                final confirmed =
+                    await showDialog<bool>(
                   context: context,
                   builder: (_) => AlertDialog(
-                    title: const Text('Anna Memory'),
-                    content: Text(
-                      '''
-        Name: ${memory.name ?? "Unknown"}
-        Vehicle: ${memory.vehicle ?? "Unknown"}
-        City: ${memory.city ?? "Unknown"}
-        Phone: ${memory.phone ?? "Unknown"}
-        ''',
+                    title: const Text(
+                      'Clear Memory?',
+                    ),
+                    content: const Text(
+                      'Anna will forget all saved information.',
                     ),
                     actions: [
                       TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Close'),
+                        onPressed: () =>
+                            Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.pop(context, true),
+                        child: const Text('Clear'),
                       ),
                     ],
+                  ),
+                );
+
+                if (confirmed != true) return;
+
+                await _memoryService.clearMemory();
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Memory cleared',
+                    ),
                   ),
                 );
               },
@@ -858,18 +835,33 @@ Future<void> updateMemory(String message) async {
               spacing: 8,
               runSpacing: 8,
               children: [
-                serviceButton(
-                    "🏥 Doctor",
-                    "I need a doctor."),
-                serviceButton(
-                    "💊 Pharmacy",
-                    "I need a pharmacy."),
-                serviceButton(
-                    "🔥 Heating",
-                    "My heating is broken."),
-                serviceButton(
-                    "🚿 Plumbing",
-                    "I have a plumbing issue."),
+                ServiceCard(
+                  title: "🏥 Doctor",
+                  onTap: () => sendQuickMessage(
+                    "I need a doctor.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "💊 Pharmacy",
+                  onTap: () => sendQuickMessage(
+                    "I need a pharmacy.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "🔥 Heating",
+                  onTap: () => sendQuickMessage(
+                    "My heating is broken.",
+                  ),
+                ),
+
+                ServiceCard(
+                  title: "🚿 Plumbing",
+                  onTap: () => sendQuickMessage(
+                    "I have a plumbing issue.",
+                  ),
+                ),
               ],
             ),
           ),
@@ -937,19 +929,26 @@ Future<void> updateMemory(String message) async {
                     index ==
                         messages.length) {
                   return const Padding(
-                    padding:
-                        EdgeInsets.all(12),
-                    child: Text(
-                      "● ● ●",
-                      style: TextStyle(
-                        fontSize: 18,
-                      ),
+                    padding: EdgeInsets.all(12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        ),
+                        SizedBox(width: 12),
+                        Text("Anna is typing..."),
+                      ],
                     ),
                   );
                 }
 
-                return buildMessage(
-                  messages[index],
+                return MessageBubble(
+                msg: messages[index],
                 );
               },
             ),
